@@ -46,6 +46,14 @@ The resulting `ps5/bin/ps5_error_analyzer.plugin` goes into `/data/etaHEN/plugin
 
 Automatic collection still depends on which homebrew payloads are present and what files they expose. This first collector does not retrieve arbitrary app install or transfer logs, so those diagnostics are not yet automatic. The prior `ps5_error_analyzer.elf` is an early manual-input prototype and is not the automatic collector.
 
+## GitHub automation
+
+The `Plugin CI` workflow builds the etaHEN plugin on pull requests and pushes to `main` or `automatic-collector`. Successful builds upload the `.plugin` and a SHA-256 checksum as a 14-day workflow artifact. Pushing a version tag such as `v0.2.0` builds the plugin and publishes both files as a GitHub Release with generated release notes.
+
+To make the build a merge gate, create a branch ruleset for `main` in **Settings → Rules → Rulesets** and require the `build-plugin` status check. Rulesets and required status checks are available for public repositories on GitHub Free. This repository currently needs that setting enabled by an administrator; the workflow alone reports failures but does not prevent merges.
+
+Release process: merge the changes, create and push a `v0.2.0` tag for the intended commit, and Actions will publish the matching plugin. This builds and packages the file, but does not install it on a console or run a hardware test.
+
 Run the Windows developer/companion CLI with Python 3:
 
 ```powershell
