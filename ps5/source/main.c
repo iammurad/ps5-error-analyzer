@@ -1,110 +1,135 @@
-#include <ps5/payload_main.h>
-
+#include <dirent.h>
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
-#define INPUT_PATH "/data/PS5ErrorAnalyzer/input.log"
-#define REPORT_PATH "/data/PS5ErrorAnalyzer/report.txt"
+#define OUTPUT_DIR "/data/PS5ErrorAnalyzer"
+#define REPORT_PATH OUTPUT_DIR "/report.txt"
+#define LOG_PATH OUTPUT_DIR "/collector.log"
 #define LINE_CAPACITY 2048
+#define MAX_FILES 128
+#define SCAN_INTERVAL_SECONDS 60
 
-static unsigned char ascii_lower(unsigned char value) {
-    if (value >= 'A' && value <= 'Z') return (unsigned char)(value + ('a' - 'A'));
-    return value;
+static const char *known_files[] = {
+    "/data/etaHEN/etaHEN.log",
+    "/data/etaHEN/etaHEN_crash.log"
+};
+static const char *crash_dir = "/data/devtools/crashes";
+
+static int has_suffix(const char *s, const char *suffix) {
+    size_t a = strlen(s), b = strlen(suffix);
+    return a >= b && strcmp(s + a - b, suffix) == 0;
 }
 
-static int contains_case_insensitive(const char *text, const char *needle) {
-    size_t needle_length = strlen(needle);
-    if (needle_length == 0) return 1;
+static unsigned char lower_ascii(unsigned char c) {
+    return c >= 'A' && c <= 'Z' ? (unsigned char)(c + ('a' - 'A')) : c;
+}
 
+static int contains_ci(const char *text, const char *needle) {
     for (; *text; ++text) {
         size_t i = 0;
-        while (i < needle_length && text[i] &&
-               ascii_lower((unsigned char)text[i]) == ascii_lower((unsigned char)needle[i])) {
-            ++i;
-        }
-        if (i == needle_length) return 1;
+        while (needle[i] && text[i] && lower_ascii((unsigned char)text[i]) ==
+               lower_ascii((unsigned char)needle[i])) ++i;
+        if (!needle[i]) return 1;
     }
     return 0;
 }
 
-static int is_insufficient_space(const char *line) {
-    return contains_case_insensitive(line, "insufficient free space") ||
-           contains_case_insensitive(line, "not enough free space") ||
-           contains_case_insensitive(line, "not enough space") ||
-           contains_case_insensitive(line, "no space left");
+static const char *match_rule(const char *line, const char **confidence) {
+    if (contains_ci(line, "insufficient free space") || contains_ci(line, "not enough free space") ||
+        contains_ci(line, "not enough space") || contains_ci(line, "no space left")) {
+        *confidence = "medium";
+        return "log.install.insufficient_space.v1";
+    }
+    if (contains_ci(line, "timeout") || contains_ci(line, "timed out")) {
+        *confidence = "low";
+        return "log.transfer.timeout.v1";
+    }
+    if (contains_ci(line, "connection refused") || contains_ci(line, "network unreachable")) {
+        *confidence = "low";
+        return "log.network.connection_failure.v1";
+    }
+    if (contains_ci(line, "error") || contains_ci(line, "failed") || contains_ci(line, "fatal")) {
+        *confidence = "low";
+        return "log.generic.error_marker.v1";
+    }
+    return NULL;
 }
 
-static void write_report(FILE *out, const char *source, unsigned int line_number,
-                         const char *original_line) {
-    fprintf(out, "Finding: Installation may have run out of space\n");
-    fprintf(out, "Confidence: medium\n");
-    fprintf(out, "Source: %s, line %u\n", source, line_number);
-    fprintf(out, "Original message: %s", original_line);
-    if (original_line[0] && original_line[strlen(original_line) - 1] != '\n') fputc('\n', out);
-    fprintf(out, "Matched rule: log.install.insufficient_space.v1\n");
-    fprintf(out, "Rule reason: Matched an explicit insufficient-space phrase.\n");
-    fprintf(out, "Possible causes:\n");
-    fprintf(out, "- Available space was below the installer's requirement.\n");
-    fprintf(out, "- Temporary install data may have reduced available space.\n");
-    fprintf(out, "Recommended checks:\n");
-    fprintf(out, "- Check available storage in the console settings.\n");
-    fprintf(out, "- Retry only after confirming enough free space for the install.\n");
-    fprintf(out, "Missing information:\n");
-    fprintf(out, "- Available free space at the time of failure.\n");
-    fprintf(out, "- Package size and required temporary space.\n");
-    fprintf(out, "- Whether temporary data from a previous attempt remained.\n\n");
-}
-
-int payload_main(struct payload_args *args) {
-    (void)args;
-    FILE *input = fopen(INPUT_PATH, "r");
-    if (!input) {
-        printf("PS5 Error Analyzer: cannot open %s\n", INPUT_PATH);
-        printf("Create /data/PS5ErrorAnalyzer and copy a log there as input.log.\n");
-        return 1;
-    }
-
-    FILE *report = fopen(REPORT_PATH, "w");
-    if (!report) {
-        fclose(input);
-        printf("PS5 Error Analyzer: cannot write %s\n", REPORT_PATH);
-        return 1;
-    }
-
-    fprintf(report, "PS5 Error Analyzer 0.1.0\n");
-    fprintf(report, "Input: %s\n\n", INPUT_PATH);
+static void scan_file(FILE *report, const char *path, unsigned int *files,
+                      unsigned int *findings) {
+    FILE *in = fopen(path, "r");
+    if (!in) return;
+    ++*files;
     char line[LINE_CAPACITY];
-    unsigned int line_number = 0;
-    unsigned int findings = 0;
-    unsigned int skipped_lines = 0;
-    while (fgets(line, sizeof(line), input)) {
-        ++line_number;
-        size_t length = strlen(line);
-        if (length > 0 && line[length - 1] != '\n' && !feof(input)) {
+    unsigned int line_no = 0;
+    while (fgets(line, sizeof(line), in)) {
+        ++line_no;
+        size_t n = strlen(line);
+        if (n && line[n - 1] != '\n' && !feof(in)) {
             int ch;
-            while ((ch = fgetc(input)) != '\n' && ch != EOF) {}
-            ++skipped_lines;
-            continue; /* Oversized lines are skipped so evidence and line numbers stay honest. */
+            while ((ch = fgetc(in)) != '\n' && ch != EOF) {}
+            continue;
         }
-        if (is_insufficient_space(line)) {
-            write_report(report, INPUT_PATH, line_number, line);
-            ++findings;
-        }
+        const char *confidence = NULL;
+        const char *rule = match_rule(line, &confidence);
+        if (!rule) continue;
+        fprintf(report, "Finding: %s\nConfidence: %s\nSource filename: %s\nLine: %u\n",
+                rule, confidence, path, line_no);
+        fprintf(report, "Original message: %s", line);
+        if (!n || line[n - 1] != '\n') fputc('\n', report);
+        fprintf(report, "Matched diagnostic rule: %s\nMissing information: full operation context, timestamps correlation, and device state may be absent from this source.\n\n", rule);
+        ++*findings;
     }
-
-    if (findings == 0) {
-        fprintf(report, "No bundled diagnostic rule matched.\n");
-        fprintf(report, "This does not mean the log is error-free.\n");
-    }
-    if (skipped_lines > 0) {
-        fprintf(report, "Input limitation: skipped %u line(s) longer than %u bytes.\n",
-                skipped_lines, (unsigned int)(LINE_CAPACITY - 1));
-    }
-    fclose(input);
-    fclose(report);
-
-    printf("PS5 Error Analyzer finished: %u finding(s).\n", findings);
-    printf("Report: %s\n", REPORT_PATH);
-    return 0;
+    fclose(in);
 }
 
+static void scan_crash_directory(FILE *report, unsigned int *files, unsigned int *findings) {
+    DIR *dir = opendir(crash_dir);
+    if (!dir) return;
+    struct dirent *entry;
+    unsigned int count = 0;
+    while ((entry = readdir(dir)) != NULL && count < MAX_FILES) {
+        if (entry->d_name[0] == '.' || !has_suffix(entry->d_name, ".json")) continue;
+        char path[512];
+        int written = snprintf(path, sizeof(path), "%s/%s", crash_dir, entry->d_name);
+        if (written > 0 && (size_t)written < sizeof(path)) {
+            scan_file(report, path, files, findings);
+            ++count;
+        }
+    }
+    closedir(dir);
+}
+
+static void scan_once(void) {
+    FILE *report = fopen(REPORT_PATH, "w");
+    if (!report) return;
+    unsigned int files = 0, findings = 0;
+    fprintf(report, "PS5 Error Analyzer 0.2.0 (automatic collector)\n");
+    fprintf(report, "Scan scope: etaHEN log files and optional PS5_DevTools crash JSON.\n");
+    fprintf(report, "Generated by periodic background scan. Missing sources are skipped.\n\n");
+    for (size_t i = 0; i < sizeof(known_files) / sizeof(known_files[0]); ++i)
+        scan_file(report, known_files[i], &files, &findings);
+    scan_crash_directory(report, &files, &findings);
+    fprintf(report, "Scanned source files: %u\nFindings: %u\n", files, findings);
+    if (!files) fprintf(report, "No supported diagnostic sources were available. Install/configure the optional source payloads and check permissions.\n");
+    if (!findings) fprintf(report, "No bundled rule matched. This does not mean the sources are error-free.\n");
+    fprintf(report, "Not scanned: protected Sony system logs or arbitrary user files.\n");
+    fclose(report);
+}
+
+int main(void) {
+    mkdir(OUTPUT_DIR, 0777);
+    FILE *log = fopen(LOG_PATH, "a");
+    if (log) {
+        fprintf(log, "PS5 Error Analyzer collector started; scan interval %u seconds.\n", SCAN_INTERVAL_SECONDS);
+        fclose(log);
+    }
+    for (;;) {
+        scan_once();
+        sleep(SCAN_INTERVAL_SECONDS);
+    }
+    return 0;
+}
