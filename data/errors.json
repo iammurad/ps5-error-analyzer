@@ -1,0 +1,29 @@
+{
+  "version": "0.1.0",
+  "rules": [
+    {
+      "id": "log.install.insufficient_space.v1",
+      "finding_id": "install.storage.insufficient_space",
+      "title": "Installation may have run out of space",
+      "summary": "The input contains an explicit insufficient-space message during installation.",
+      "pattern": "(?:install(?:ation)?[^\\n]{0,100})?(?:insufficient free space|not enough (?:free )?space|no space left)",
+      "codes": [],
+      "confidence": "medium",
+      "reason": "Matched an explicit insufficient-space phrase. The message indicates a storage-space issue but does not establish the exact cause.",
+      "possible_causes": [
+        "Available space was below the installer's requirement.",
+        "Temporary install data may have reduced available space."
+      ],
+      "recommended_checks": [
+        "Check available storage in the console settings.",
+        "Retry only after confirming enough free space for the install."
+      ],
+      "missing_information": [
+        "Available free space at the time of failure.",
+        "The package size and installer's required temporary space.",
+        "Whether temporary data from a previous attempt remained."
+      ]
+    }
+  ]
+}
+
