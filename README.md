@@ -48,7 +48,7 @@ Automatic collection still depends on which homebrew payloads are present and wh
 
 ## GitHub automation
 
-The `Plugin CI` workflow builds the etaHEN plugin on pull requests and pushes to `main` or `automatic-collector`. Successful builds upload the `.plugin` and a SHA-256 checksum as a 14-day workflow artifact. Pushing a version tag such as `v0.2.0` builds the plugin and publishes both files as a GitHub Release with generated release notes.
+The `Plugin CI` workflow builds the etaHEN plugin on pull requests and pushes to `main` or `automatic-collector`. Successful builds upload the `.plugin` and a SHA-256 checksum as a 14-day workflow artifact. Pushing a version tag such as `v0.2.0` builds the plugin and publishes it with a SHA-256 checksum. GitHub generates release notes from merged changes; the workflow uses those notes as the release description and also attaches them as `CHANGELOG.md`.
 
 To make the build a merge gate, create a branch ruleset for `main` in **Settings → Rules → Rulesets** and require the `build-plugin` status check. Rulesets and required status checks are available for public repositories on GitHub Free. This repository currently needs that setting enabled by an administrator; the workflow alone reports failures but does not prevent merges.
 
