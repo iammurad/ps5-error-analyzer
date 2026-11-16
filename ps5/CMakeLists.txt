@@ -24,8 +24,6 @@ target_link_directories(ps5_error_analyzer PRIVATE
   "${PS5_PAYLOAD_SDK}/target/lib"
   "${ETAHEN_PLUGINS}/lib")
 target_link_libraries(ps5_error_analyzer PRIVATE SceLibcInternal)
-target_link_options(ps5_error_analyzer PRIVATE -fuse-ld=lld)
-
 add_custom_command(TARGET ps5_error_analyzer POST_BUILD
   COMMAND python "${ETAHEN_PLUGINS}/lib/make_plugin.py"
           "$<TARGET_FILE:ps5_error_analyzer>" "${PLUGIN_TITLE_ID}" "${PLUGIN_VERSION}"

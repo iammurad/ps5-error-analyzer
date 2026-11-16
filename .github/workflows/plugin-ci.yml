@@ -1,0 +1,120 @@
+name: Plugin CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+      - automatic-collector
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-plugin:
+    name: build-plugin
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out analyzer
+        uses: actions/checkout@v4
+
+      - name: Set up Python for etaHEN packaging
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install host build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes cmake ninja-build unzip curl
+
+      - name: Find the latest PS5 payload SDK release
+        id: sdk
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const release = await github.rest.repos.getLatestRelease({
+              owner: "ps5-payload-dev",
+              repo: "sdk",
+            });
+            const asset = release.data.assets.find((item) =>
+              item.name.toLowerCase().includes("sdk") && item.name.endsWith(".zip")
+            );
+            if (!asset) throw new Error("Latest PS5 payload SDK release has no SDK ZIP asset");
+            core.setOutput("url", asset.browser_download_url);
+
+      - name: Install the PS5 payload SDK
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/ps5-sdk"
+          curl --fail --location "${{ steps.sdk.outputs.url }}" --output "$RUNNER_TEMP/ps5-sdk.zip"
+          unzip -q "$RUNNER_TEMP/ps5-sdk.zip" -d "$RUNNER_TEMP/ps5-sdk"
+          chmod -R 0777 "$RUNNER_TEMP/ps5-sdk/ps5-payload-sdk"
+          test -x "$RUNNER_TEMP/ps5-sdk/ps5-payload-sdk/bin/prospero-clang"
+          echo "PS5_PAYLOAD_SDK=$RUNNER_TEMP/ps5-sdk/ps5-payload-sdk" >> "$GITHUB_ENV"
+
+      - name: Check out etaHEN Plugin SDK
+        uses: actions/checkout@v4
+        with:
+          repository: etaHEN/etaHEN-Plugins
+          ref: 6339554e4e3c92c0a655a37194c1152d6b82ad88
+          path: deps/etaHEN-Plugins
+
+      - name: Configure and build the plugin
+        shell: bash
+        run: |
+          cmake -S ps5 -B build-plugin -G Ninja \
+            -D "CMAKE_TOOLCHAIN_FILE=$PS5_PAYLOAD_SDK/toolchain/prospero.cmake" \
+            -D "PS5_PAYLOAD_SDK=$PS5_PAYLOAD_SDK" \
+            -D "ETAHEN_PLUGINS=$GITHUB_WORKSPACE/deps/etaHEN-Plugins"
+          cmake --build build-plugin --parallel 2
+
+      - name: Verify and checksum plugin
+        shell: bash
+        run: |
+          test -s ps5/bin/ps5_error_analyzer.plugin
+          sha256sum ps5/bin/ps5_error_analyzer.plugin > ps5/bin/ps5_error_analyzer.plugin.sha256
+
+      - name: Upload plugin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ps5-error-analyzer-plugin-${{ github.sha }}
+          path: |
+            ps5/bin/ps5_error_analyzer.plugin
+            ps5/bin/ps5_error_analyzer.plugin.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: publish-release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build-plugin
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download plugin artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ps5-error-analyzer-plugin-${{ github.sha }}
+          path: release-files
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "${GITHUB_REF_NAME}"
+          release-files/ps5_error_analyzer.plugin
+          release-files/ps5_error_analyzer.plugin.sha256
+          --title "${GITHUB_REF_NAME}"
+          --generate-notes
+          --verify-tag
