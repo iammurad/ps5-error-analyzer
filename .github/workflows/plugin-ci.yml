@@ -8,8 +8,6 @@ on:
     branches:
       - main
       - automatic-collector
-    tags:
-      - "v*"
   workflow_dispatch:
 
 permissions:
@@ -96,27 +94,57 @@ jobs:
 
   release:
     name: publish-release
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: build-plugin
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - name: Determine version and check for an existing release
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          if [[ ! "$version" =~ ^([0-9])\.([0-9])\.([0-9])$ ]]; then
+            echo "VERSION must use the three-part format 0.2.0 (single-digit fields required by the etaHEN plugin format)" >&2
+            exit 1
+          fi
+          IFS=. read -r major minor patch <<< "$version"
+          expected_plugin_version="${major}.${minor}${patch}"
+          actual_plugin_version="$(sed -n 's/^[[:space:]]*set(PLUGIN_VERSION "\([0-9]\.[0-9][0-9]\)")$/\1/p' ps5/CMakeLists.txt)"
+          if [[ "$actual_plugin_version" != "$expected_plugin_version" ]]; then
+            echo "VERSION $version does not match etaHEN PLUGIN_VERSION $actual_plugin_version (expected $expected_plugin_version)" >&2
+            exit 1
+          fi
+          tag="v${version}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            exists=true
+            echo "Release $tag already exists; skipping duplicate release."
+          else
+            exists=false
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "exists=$exists" >> "$GITHUB_OUTPUT"
+
       - name: Download plugin artifact
+        if: steps.version.outputs.exists == 'false'
         uses: actions/download-artifact@v4
         with:
           name: ps5-error-analyzer-plugin-${{ github.sha }}
           path: release-files
 
       - name: Publish GitHub Release
+        if: steps.version.outputs.exists == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
+          gh release create "${{ steps.version.outputs.tag }}" \
             release-files/ps5_error_analyzer.plugin \
             release-files/ps5_error_analyzer.plugin.sha256 \
-            --title "${GITHUB_REF_NAME}" \
+            --title "${{ steps.version.outputs.tag }}" \
             --generate-notes \
-            --verify-tag
-          gh release view "${GITHUB_REF_NAME}" --json body --jq .body > CHANGELOG.md
-          gh release upload "${GITHUB_REF_NAME}" CHANGELOG.md --clobber
+            --target "$GITHUB_SHA"
+          gh release view "${{ steps.version.outputs.tag }}" --json body --jq .body > CHANGELOG.md
+          gh release upload "${{ steps.version.outputs.tag }}" CHANGELOG.md --clobber
