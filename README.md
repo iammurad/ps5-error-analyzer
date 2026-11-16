@@ -20,29 +20,31 @@ Access depends on the console firmware, jailbreak, and homebrew environment. The
 
 These are capabilities of particular homebrew tools and configurations, not guarantees for every PS5 or firmware version. The analyzer should never require kernel access or alter console files.
 
-## First working version
+## Automatic console collector
 
-The target product is a homebrew diagnostic app for jailbroken PS5s. The first console-side implementation is a loader-compatible ELF payload: it reads a user-exported etaHEN text log from `/data/PS5ErrorAnalyzer/input.log` and writes a traceable TXT report to `/data/PS5ErrorAnalyzer/report.txt`. The user can transfer the log with the homebrew environment's FTP service. The payload does not patch the kernel, collect protected system logs, or alter the source log.
+The on-console target is now a persistent etaHEN plugin rather than a manual one-shot analyzer. It wakes once per minute and reads only known diagnostic sources:
 
-This ELF is an early proof of the console-side workflow, not a polished native PS5 application with a graphical interface. The public PS5Dev SDK currently targets ELF payloads and says full proper applications are not supported. The current Python CLI remains a developer/companion tool for checking structured reports and iterating on rules.
+- `/data/etaHEN/etaHEN.log`
+- `/data/etaHEN/etaHEN_crash.log`
+- JSON files in `/data/devtools/crashes/` when PS5_DevTools is installed
 
-To build the console ELF, install/build the [PS5Dev PS5 SDK](https://github.com/PS5Dev/PS5SDK), CMake, Ninja, and Clang, then set `PS5SDK` to the SDK root:
+It rewrites `/data/PS5ErrorAnalyzer/report.txt` with exact matched lines, source filename, one-based line number, rule ID, confidence, and known evidence gaps. It appends startup information to `/data/PS5ErrorAnalyzer/collector.log`. Missing optional sources are skipped automatically. It does not scan protected Sony logs, crawl all of `/data`, upload anything, or alter its source logs. The report is local to the console.
+
+Build requires the [PS5 payload SDK](https://github.com/ps5-payload-dev/sdk), [etaHEN Plugin SDK](https://github.com/etaHEN/etaHEN-Plugins), CMake, Ninja, and Clang. Use installed SDK roots (including their built Windows toolchain utilities), then configure and build:
 
 ```powershell
-$env:PS5SDK = (Resolve-Path "C:\path\to\PS5SDK").Path
-$toolchain = "$env:PS5SDK\cmake\toolchain-ps5.cmake"
-cmake -S $env:PS5SDK -B "$env:PS5SDK\build-ps5" -G Ninja `
-  -D CMAKE_C_COMPILER=clang -D CMAKE_CXX_COMPILER=clang++ `
-  -D CMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY `
-  -D "CMAKE_TOOLCHAIN_FILE=$toolchain"
-cmake --build "$env:PS5SDK\build-ps5" --target ps5sdk_crt
-cmake -S .\ps5 -B .\build-ps5 -G Ninja `
-  -D CMAKE_C_COMPILER=clang -D CMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY `
-  -D "CMAKE_TOOLCHAIN_FILE=$toolchain" -D "PS5SDK=$env:PS5SDK"
-cmake --build .\build-ps5
+$env:PS5_PAYLOAD_SDK = (Resolve-Path "C:\path\to\ps5-payload-sdk").Path
+$env:ETAHEN_PLUGINS = (Resolve-Path "C:\path\to\etaHEN-Plugins").Path
+cmake -S .\ps5 -B .\build-plugin -G Ninja `
+  -D "CMAKE_TOOLCHAIN_FILE=$env:PS5_PAYLOAD_SDK\host\toolchain\prospero.cmake" `
+  -D "PS5_PAYLOAD_SDK=$env:PS5_PAYLOAD_SDK" `
+  -D "ETAHEN_PLUGINS=$env:ETAHEN_PLUGINS"
+cmake --build .\build-plugin
 ```
 
-The built file is [`ps5/bin/ps5_error_analyzer.elf`](ps5/bin/ps5_error_analyzer.elf). On a compatible jailbroken console, create `/data/PS5ErrorAnalyzer` using the environment's file manager or FTP, place an exported log there as `input.log`, and load the ELF through a compatible ELF loader. The report is written beside the input as `report.txt`. The SDK is a separate dependency; this repository does not redistribute it. The payload build was validated with the PS5Dev SDK toolchain, but still needs execution on a compatible console and homebrew environment.
+The resulting `ps5/bin/ps5_error_analyzer.plugin` goes into `/data/etaHEN/plugins/`; etaHEN can load it from its plugin menu or automatically at startup. The SDKs are separate dependencies and are not redistributed here.
+
+Automatic collection still depends on which homebrew payloads are present and what files they expose. This first collector does not retrieve arbitrary app install or transfer logs, so those diagnostics are not yet automatic. The prior `ps5_error_analyzer.elf` is an early manual-input prototype and is not the automatic collector.
 
 Run the Windows developer/companion CLI with Python 3:
 
@@ -103,14 +105,14 @@ For JSON inputs, `location` should use a JSON Pointer instead of line coordinate
 
 ```text
 ps5/
-  CMakeLists.txt  PS5 SDK ELF build target
-  source/main.c   on-console log scan and traceable TXT report
+  CMakeLists.txt  etaHEN plugin build and packaging target
+  source/main.c   background collector and traceable TXT report
 analyzer.py       Windows companion/development CLI
 data/
   errors.json curated error-code entries and rules
 ```
 
-The console payload uses C and the PS5 SDK's C runtime, avoiding the unsupported C++ STL. The diagnostic rule catalog is still small and the native payload currently implements only the explicit insufficient-space text pattern. Keep the Windows companion useful for format and rule development; migrate stable parsing and report logic toward a shared C layer as the supported console environment allows.
+The console plugin uses C and the etaHEN plugin SDK's libc, avoiding the unsupported C++ STL. Its current rule set is intentionally heuristic: explicit storage, timeout, network connection, and generic error markers are labeled medium or low confidence. Crash JSON is currently scanned as source text, so a matching line is reported with its line number rather than a parsed JSON Pointer. Keep improving parsers and rules without overstating what each source proves.
 
 ## Initial scope boundaries
 
