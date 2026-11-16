@@ -48,11 +48,11 @@ Automatic collection still depends on which homebrew payloads are present and wh
 
 ## GitHub automation
 
-The `Plugin CI` workflow builds the etaHEN plugin on pull requests and pushes to `main` or `automatic-collector`. Successful builds upload the `.plugin` and a SHA-256 checksum as a 14-day workflow artifact. Pushing a version tag such as `v0.2.0` builds the plugin and publishes it with a SHA-256 checksum. GitHub generates release notes from merged changes; the workflow uses those notes as the release description and also attaches them as `CHANGELOG.md`.
+The `Plugin CI` workflow builds the etaHEN plugin on pull requests and pushes to `main` or `automatic-collector`. Successful builds upload the `.plugin` and a SHA-256 checksum as a 14-day workflow artifact. Every push to `main` builds the plugin and checks `VERSION`; when that version has no release yet, it publishes a GitHub Release with the `.plugin`, checksum, generated release notes, and a downloadable `CHANGELOG.md`. Repeated pushes without a version bump do not create duplicate releases.
 
 To make the build a merge gate, create a branch ruleset for `main` in **Settings → Rules → Rulesets** and require the `build-plugin` status check. Rulesets and required status checks are available for public repositories on GitHub Free. This repository currently needs that setting enabled by an administrator; the workflow alone reports failures but does not prevent merges.
 
-Release process: merge the changes, create and push a `v0.2.0` tag for the intended commit, and Actions will publish the matching plugin. This builds and packages the file, but does not install it on a console or run a hardware test.
+To prepare the next release, update `VERSION` and the etaHEN `PLUGIN_VERSION` in `ps5/CMakeLists.txt` together, then merge that change to `main`. The workflow validates they match and creates a `v<version>` tag automatically. It builds and packages the file, but does not install it on a console or run a hardware test.
 
 Run the Windows developer/companion CLI with Python 3:
 
