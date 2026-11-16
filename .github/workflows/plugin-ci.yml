@@ -76,11 +76,14 @@ jobs:
             -D "ETAHEN_PLUGINS=$GITHUB_WORKSPACE/deps/etaHEN-Plugins"
           cmake --build build-plugin --parallel 2
 
-      - name: Verify and checksum plugin
+      - name: Verify and checksum build outputs
         shell: bash
         run: |
           test -s ps5/bin/ps5_error_analyzer.plugin
+          test -s ps5/bin/ps5_error_analyzer.elf
+          python -c 'from pathlib import Path; assert Path("ps5/bin/ps5_error_analyzer.elf").read_bytes()[:4] == bytes.fromhex("7f454c46")'
           sha256sum ps5/bin/ps5_error_analyzer.plugin > ps5/bin/ps5_error_analyzer.plugin.sha256
+          sha256sum ps5/bin/ps5_error_analyzer.elf > ps5/bin/ps5_error_analyzer.elf.sha256
 
       - name: Upload plugin artifact
         uses: actions/upload-artifact@v4
@@ -89,6 +92,8 @@ jobs:
           path: |
             ps5/bin/ps5_error_analyzer.plugin
             ps5/bin/ps5_error_analyzer.plugin.sha256
+            ps5/bin/ps5_error_analyzer.elf
+            ps5/bin/ps5_error_analyzer.elf.sha256
           if-no-files-found: error
           retention-days: 14
 
@@ -132,7 +137,6 @@ jobs:
           echo "exists=$exists" >> "$GITHUB_OUTPUT"
 
       - name: Download plugin artifact
-        if: steps.version.outputs.exists == 'false'
         uses: actions/download-artifact@v4
         with:
           name: ps5-error-analyzer-plugin-${{ github.sha }}
@@ -151,3 +155,17 @@ jobs:
             --target "$GITHUB_SHA"
           gh release view "${{ steps.version.outputs.tag }}" --json body --jq .body > CHANGELOG.md
           gh release upload "${{ steps.version.outputs.tag }}" CHANGELOG.md --clobber
+
+      - name: Add raw ELF to an existing release if missing
+        if: steps.version.outputs.exists == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view "${{ steps.version.outputs.tag }}" --json assets --jq '.assets[].name' | grep -Fxq 'ps5_error_analyzer.elf'; then
+            echo "The raw ELF is already attached to ${{ steps.version.outputs.tag }}."
+          else
+            gh release upload "${{ steps.version.outputs.tag }}" \
+              release-files/ps5_error_analyzer.elf \
+              release-files/ps5_error_analyzer.elf.sha256
+          fi
