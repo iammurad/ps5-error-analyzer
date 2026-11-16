@@ -42,13 +42,18 @@ cmake -S .\ps5 -B .\build-plugin -G Ninja `
 cmake --build .\build-plugin
 ```
 
-The resulting `ps5/bin/ps5_error_analyzer.plugin` goes into `/data/etaHEN/plugins/`; etaHEN can load it from its plugin menu or automatically at startup. The SDKs are separate dependencies and are not redistributed here.
+The build produces two files for different loaders:
+
+- `ps5_error_analyzer.plugin` is the etaHEN plugin. Install it in `/data/etaHEN/plugins/`; etaHEN can load it from its plugin menu or automatically at startup.
+- `ps5_error_analyzer.elf` is the raw ELF payload for a payload manager or other ELF loader. It is the portable payload format and is not wrapped for etaHEN's plugin menu.
+
+The SDKs are separate dependencies and are not redistributed here.
 
 Automatic collection still depends on which homebrew payloads are present and what files they expose. This first collector does not retrieve arbitrary app install or transfer logs, so those diagnostics are not yet automatic. The prior `ps5_error_analyzer.elf` is an early manual-input prototype and is not the automatic collector.
 
 ## GitHub automation
 
-The `Plugin CI` workflow builds the etaHEN plugin on pull requests and pushes to `main` or `automatic-collector`. Successful builds upload the `.plugin` and a SHA-256 checksum as a 14-day workflow artifact. Every push to `main` builds the plugin and checks `VERSION`; when that version has no release yet, it publishes a GitHub Release with the `.plugin`, checksum, generated release notes, and a downloadable `CHANGELOG.md`. Repeated pushes without a version bump do not create duplicate releases.
+The `Plugin CI` workflow builds both formats on pull requests and pushes to `main` or `automatic-collector`. Successful builds upload the `.plugin`, raw `.elf`, and SHA-256 checksums as a 14-day workflow artifact. Every push to `main` checks `VERSION`; when that version has no release yet, it publishes a GitHub Release with both files, checksums, generated release notes, and a downloadable `CHANGELOG.md`. If the release already exists, the workflow adds the raw ELF and its checksum when missing. Repeated pushes without a version bump do not create duplicate releases.
 
 To make the build a merge gate, create a branch ruleset for `main` in **Settings → Rules → Rulesets** and require the `build-plugin` status check. Rulesets and required status checks are available for public repositories on GitHub Free. This repository currently needs that setting enabled by an administrator; the workflow alone reports failures but does not prevent merges.
 
@@ -138,3 +143,7 @@ The console plugin uses C and the etaHEN plugin SDK's libc, avoiding the unsuppo
 
 Recheck these references as the homebrew ecosystem and SDK change. The project should record tested firmware, tool version, and collection method for every supported input format.
 
+
+## License
+
+The project is licensed under GNU GPL version 3. See [LICENSE](LICENSE). Third-party SDKs and other dependencies retain their own licenses.
