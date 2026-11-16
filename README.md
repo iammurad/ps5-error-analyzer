@@ -36,7 +36,7 @@ Build requires the [PS5 payload SDK](https://github.com/ps5-payload-dev/sdk), [e
 $env:PS5_PAYLOAD_SDK = (Resolve-Path "C:\path\to\ps5-payload-sdk").Path
 $env:ETAHEN_PLUGINS = (Resolve-Path "C:\path\to\etaHEN-Plugins").Path
 cmake -S .\ps5 -B .\build-plugin -G Ninja `
-  -D "CMAKE_TOOLCHAIN_FILE=$env:PS5_PAYLOAD_SDK\host\toolchain\prospero.cmake" `
+  -D "CMAKE_TOOLCHAIN_FILE=$env:PS5_PAYLOAD_SDK\toolchain\prospero.cmake" `
   -D "PS5_PAYLOAD_SDK=$env:PS5_PAYLOAD_SDK" `
   -D "ETAHEN_PLUGINS=$env:ETAHEN_PLUGINS"
 cmake --build .\build-plugin
